@@ -3,6 +3,7 @@ services:
     name: xfdl-mobile-downloader
     runtime: python
     plan: free
+    autoDeployTrigger: off
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --worker-class gthread --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT app:app
     healthCheckPath: /healthz
