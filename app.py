@@ -1161,6 +1161,14 @@ def create_job():
         return jsonify({"error": "Cookie is required before running a job."}), 400
     if not url:
         return jsonify({"error": "URL is required."}), 400
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (host == "simpcity.cr" or host.endswith(".simpcity.cr")):
+        return jsonify({"error": "Use an HTTPS SimpCity thread URL on simpcity.cr."}), 400
+    try:
+        _resolve_root_dir(data.get("out_dir"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     job = _create_job(data)
     return jsonify({"id": job["id"], "status": job["status"]}), 202
 
