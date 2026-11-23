@@ -3,6 +3,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import os
+import hmac
 import threading
 import time
 import uuid
@@ -20,10 +21,38 @@ JOBS_LOCK = threading.Lock()
 
 
 def _resolve_root_dir(out_dir=None):
-    raw = (out_dir or "").strip() or "./downloads"
-    if not os.path.isabs(raw):
-        raw = os.path.join(APP_DIR, raw)
-    return os.path.abspath(raw)
+    # All downloads and vault operations stay inside this app's downloads folder.
+    raw = (out_dir or "./downloads").strip().replace("\\", "/")
+    if not raw:
+        raw = "./downloads"
+    if os.path.isabs(raw):
+        raise ValueError("Output folder must be inside ./downloads.")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if parts and parts[0] == "downloads":
+        parts = parts[1:]
+    if any(part == ".." for part in parts):
+        raise ValueError("Output folder cannot contain parent-directory segments.")
+    root = os.path.abspath(os.path.join(APP_DIR, "downloads", *parts))
+    safe_root = os.path.abspath(os.path.join(APP_DIR, "downloads"))
+    if root != safe_root and not root.startswith(safe_root + os.sep):
+        raise ValueError("Output folder must be inside ./downloads.")
+    return root
+
+
+@app.before_request
+def require_app_password():
+    if request.endpoint == "healthz":
+        return None
+    expected = os.environ.get("APP_PASSWORD", "")
+    if not expected:
+        return jsonify({"error": "APP_PASSWORD is not configured on the server."}), 503
+    supplied = request.authorization.password if request.authorization else ""
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        response = jsonify({"error": "Authentication required."})
+        response.status_code = 401
+        response.headers["WWW-Authenticate"] = 'Basic realm="XFDL Mobile Downloader"'
+        return response
+    return None
 
 
 def _safe_child_path(root_dir, rel_path):
@@ -332,7 +361,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>XFDL // BACKSTAGE DECK</title>
+  <title>XFDL Mobile Downloader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@500;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
@@ -781,7 +810,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
 
       <div class="toggles">
-        <label class="chip"><input type="checkbox" id="save_local" checked /> SAVE ON PHONE</label>
+        <label class="chip"><input type="checkbox" id="save_local" /> REMEMBER COOKIE ON THIS DEVICE</label>
         <label class="chip"><input type="checkbox" id="resume" name="resume" checked /> RESUME</label>
         <label class="chip"><input type="checkbox" id="links_only" name="links_only" /> LINKS ONLY</label>
         <label class="chip"><input type="checkbox" id="no_keepalive" name="no_keepalive" /> NO KEEPALIVE</label>
@@ -843,10 +872,8 @@ HTML_PAGE = """<!DOCTYPE html>
     const alertEl = document.getElementById("form-alert");
     const outDirEl = document.getElementById("out_dir");
 
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) cookieEl.value = saved;
-    } catch (_) {}
+    // Never restore a forum cookie automatically. Clear any value saved by older builds.
+    try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
 
     function syncLocalCookie() {
       try {
@@ -1051,6 +1078,11 @@ HTML_PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+@app.get("/healthz")
+def healthz():
+    return jsonify({"status": "ok"})
 
 
 @app.get("/")
