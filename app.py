@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 import zipfile
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, render_template_string, request, send_file
 
@@ -169,6 +170,10 @@ def _run_job(job_id, payload):
         url = (payload.get("url") or "").strip()
         if not url:
             raise ValueError("Missing thread URL")
+        parsed_thread = urlparse(url)
+        host = (parsed_thread.hostname or "").lower()
+        if parsed_thread.scheme != "https" or not (host == "simpcity.cr" or host.endswith(".simpcity.cr")):
+            raise ValueError("Use an HTTPS SimpCity thread URL on simpcity.cr.")
 
         cookie_str = (payload.get("cookie") or "").strip()
         if not cookie_str:
@@ -195,6 +200,14 @@ def _run_job(job_id, payload):
             page_delay=page_delay,
             no_keepalive=no_keepalive,
         )
+        # Scope the forum session cookie to SimpCity only. Resolved media hosts
+        # must never receive the forum login cookie.
+        dl.s.headers.pop("Cookie", None)
+        clean_cookie = xfdl.parse_cookie_input(cookie_str)
+        for pair in clean_cookie.split(";"):
+            name, separator, value = pair.strip().partition("=")
+            if separator and name.strip():
+                dl.s.cookies.set(name.strip(), value.strip(), domain=".simpcity.cr", path="/", secure=True)
 
         _append_log(job, "SCRAPE", f"Hitting thread: {url}")
         performer, raw_entries = dl.scrape_thread(
@@ -758,7 +771,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="masthead">
       <div>
         <div class="brand-tag">MOBILE TOUR DECK // V1</div>
-        <h1>XF<span>DL</span> // DROP</h1>
+        <h1>XFDL <span>MOBILE</span></h1>
       </div>
       <div class="tour-pill" id="clock-pill">STANDBY</div>
     </div>
